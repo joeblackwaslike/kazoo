@@ -128,9 +128,15 @@ find_numbers(<<"+", Rest/binary>>, Quantity, Options) ->
 find_numbers(<<"1", Rest/binary>>, Quantity, Options) ->
     find_numbers(Rest, Quantity, Options);
 find_numbers(<<NPA:3/binary>>, Quantity, Options) ->
-    Resp = soap("getDIDs", [{"npa", NPA}]),
-    MaybeJson = to_json('find_numbers', Quantity, Resp),
-    to_numbers(MaybeJson, knm_search:query_id(Options));
+    FeeTollNumbers = [800, 833, 844, 855, 866, 877, 888],
+    case lists:member(NPA, FeeTollNumbers) of
+        false ->
+            find_low_fee_numbers(NPA, Quantity, Options);
+        true ->
+            Resp = soap("getDIDs", [{"npa", NPA}]),
+            MaybeJson = to_json('find_numbers', Quantity, Resp),
+            to_numbers(MaybeJson, knm_search:query_id(Options))
+    end;
 find_numbers(<<NXX:6/binary,_/binary>>, Quantity, Options) ->
     Resp = soap("getDIDs", [{"nxx", NXX}]),
     MaybeJson = to_json('find_numbers', Quantity, Resp),
@@ -371,7 +377,7 @@ soap_request(Action, Body) ->
               ,{"User-Agent", ?KNM_USER_AGENT}
               ,{"Content-Type", "text/xml;charset=UTF-8"}
               ],
-    HTTPOptions = [{'ssl', [{'verify', 'verify_none'}]}
+    HTTPOptions = [{'ssl', [{'verify', 'verify_none'}, {versions, ['tlsv1.2']}]}
                   ,{'timeout', 180 * ?MILLISECONDS_IN_SECOND}
                   ,{'connect_timeout', 180 * ?MILLISECONDS_IN_SECOND}
                   ,{'body_format', 'string'}
@@ -436,3 +442,28 @@ xpath(Action, CategoryHierarchy) ->
 %% http://dev.voipinnovations.com/VOIP/Services/APIService.asmx?wsdl
 
 %%% End of Module
+
+-spec find_low_fee_numbers(any(), pos_integer(), knm_search:options()) ->
+  {'ok', list()} |
+  {'error', any()}.
+find_low_fee_numbers(NPA, Quantity, Options) ->
+    find_low_fee_numbers2(NPA, Quantity, Options, 0).
+-spec find_low_fee_numbers2(any(), any(), pos_integer(), any()) ->
+  {'ok', list()} |
+  {'error', any()}.
+find_low_fee_numbers2(NPA, Quantity, Options, Tier) ->
+    Resp = soap("getDIDs", [{"npa", NPA}, {"tier", Tier}]),
+    MaybeJson = to_json('find_numbers', Quantity, Resp),
+    case to_numbers(MaybeJson, knm_search:query_id(Options)) of
+        {'ok', Numbers} when Numbers =/= [] ->
+            {'ok', Numbers};
+        _Other ->
+            case Tier < 3 of
+                true ->
+                    find_low_fee_numbers2(NPA, Quantity, Options, Tier + 1);
+                false ->
+                    Resp = soap("getDIDs", [{"npa", NPA}]),
+                    MaybeJson = to_json('find_numbers', Quantity, Resp),
+                    to_numbers(MaybeJson, knm_search:query_id(Options))
+        end
+    end.
